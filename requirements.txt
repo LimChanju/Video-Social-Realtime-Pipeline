@@ -1,5 +1,5 @@
-pyspark==3.5.1
-delta-spark==3.2.0
+pyspark==3.4.0
+delta-spark==2.4.0
 python-dotenv
 pandas
 mlflow

@@ -1,0 +1,60 @@
+services:
+  fetch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fetch
+    volumes:
+      - ./jobs:/app/jobs
+      - ./data:/app/data
+    command: ["python3", "jobs/00_fetch_to_landing.py"]
+
+  bronze:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bronze
+    volumes:
+      - ./jobs:/app/jobs
+      - ./data:/app/data
+    command: ["python3", "jobs/10_bronze_batch.py"]
+
+  silver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: silver
+    volumes:
+      - ./jobs:/app/jobs
+      - ./data:/app/data
+    command: ["python3", "jobs/20_silver_stream.py"]
+
+  gold:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gold
+    volumes:
+      - ./jobs:/app/jobs
+      - ./data:/app/data
+    command: ["python3", "jobs/30_gold_features.py"]
+
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: train
+    volumes:
+      - ./jobs:/app/jobs
+      - ./data:/app/data
+    command: ["python3", "jobs/40_train_pareto.py"]
+
+  predict:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: predict
+    volumes:
+      - ./jobs:/app/jobs
+      - ./data:/app/data
+    command: ["python3", "jobs/50_predict_stream.py"]

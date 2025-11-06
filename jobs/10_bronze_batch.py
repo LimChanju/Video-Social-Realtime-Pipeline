@@ -43,26 +43,58 @@ sample_df = spark.createDataaFrame(sampled_rdd, schema=df.schema)
 print(f"Reservoir Sampling 완료. 샘플 크기: {sample_df.count()}")
 
 # ================================================================================
-# 1-2. 스키마 고정 및 메타컬럼 추가 (ingest_date, source)
+# 2. 앞으로 들어올 데이터들은 스키마 고정 및 메타컬럼 추가 (ingest_date, source)
+# bronze 레이어로 넣기 좋게 스키마 고정 + 메타컬럼 추가(ingest_date, source)
 # ================================================================================
 incoming = df.selectExpr("post_id","video_id","author_id","text","ts")\
            .withColumn("ingest_date", current_date())\
            .withColumn("source", lit("mock"))
-# bronze 레이어로 넣기 좋게 스키마 고정 + 메타컬럼 추가(ingest_date, source)
 
 # ================================================================================
-# 2. Bloom Filter로 중복 필터링 (Create Bloom from recent bronze (if exists))
+# B. Bloom Filter로 중복 필터링 (Create Bloom from recent bronze (if exists))
+# 목적: 최근 7일 간의 post_id / video_id 중복 방지
 # ================================================================================
 from pathlib import Path
-bf = None
-if Path(BRONZE).exists():
-    try: # post_id를 기준으로 Bloom 필터 생성한 후에 새로 들어온 것 중 중복 post_id인 행은 제외
-        recent_ids = spark.read.format("delta").load(BRONZE).select("post_id").na.drop()
-        bf = recent_ids.agg(expr("bloom_filter(post_id, 100000, 0.01) as bf")).collect()[0]["bf"]
-    except Exception as e:
-        bf = None
+from pyspark.sql.functions import date_sub
 
-filtered = incoming if bf is None else incoming.filter(~expr(f"might_contain('{bf}', post_id)"))
+bf_post, bf_video = None, None
+
+if Path(BRONZE).exists():
+    try:# 최근 7일치 데이터만 필터링
+        bronze_df = spark.read.format("delta").load(BRONZE)
+        bronze_recent = bronze_df.filter(col("ingest_date") >= date_sub(current_date(), 7))
+        
+        # post_id 기준 Bloom 필터 생성
+        bf_post = bronze_recent.select("post_id").na.drop().agg(
+            expr("bloom_filter(post_id, 100000, 0.01) as bf_post")
+        ).collect()[0]["bf_post"]
+        
+        # video_id 기준 Bloom 필터 생성
+        bf_post = bronze_recent.select("video_id").na.drop().agg(
+            expr("bloom_filter(video_id, 100000, 0.01) as bf_post")
+        ).collect()[0]["bf_video"]
+        
+        print("최근 7일 Bronze 데이터로 Bloom 필터 생성 완료.")
+        
+    except Exception as e:
+        print("Bloom 필터 생성 중 오류 발생:", e)
+        bf_post, bf_video = None, None
+
+# incoming 데이터를 Bloom 필터로 빠른 중복 제거
+if bf_post or bf_video:
+    conds = []
+    if bf_post:
+        conds.append(f"might_contain('{bf_post}', post_id)")
+    if bf_video:
+        conds.append(f"might_contain('{bf_video}', video_id)")
+        
+    condition = " OR ".join(conds)
+    filtered = incoming.filter(~expr(condition))
+    print(f"Bloom 필터 적용 완료. 중복 제거 후 rows: {filtered.count}")
+else:
+    filtered = incoming
+    print("Bloom 필터가 없어 중복 제거를 건너뜀.")
+
 # 3. Bronze Delta에 Append (증분 수집)
 # 스키마를 고정한 채 Delta Lake 포맷으로 증분 저장
 (filtered.write.format("delta").mode("append")

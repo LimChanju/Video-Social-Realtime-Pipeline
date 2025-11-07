@@ -43,7 +43,7 @@ clean = (raw
 
 # 2. Sliding Window 설정
 win = (clean
-  .groupBy(window(col("event_time"), WIN, SLIDE), col("video_id"))
+  .groupBy(window(col("event_time"), WIN, SLIDE), col("video_id"), col("author_id"))
   .count())
 
 # 3. Delta Format으로 실시간 집계 결과 저장
